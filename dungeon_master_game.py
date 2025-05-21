@@ -1,6 +1,13 @@
 import requests
 import json
 
+# --- User Configurable Settings ---
+# Please update these values if your local Language Model (LM) is running on a different
+# IP address/port or if you are using a different model name.
+LM_API_URL = "http://192.168.0.177:1234/v1/chat/completions"
+LM_MODEL_NAME = "qwen3-4b"
+# --- End User Configurable Settings ---
+
 def generate_response(prompt_history: list, max_length: int = 200) -> str | None:
     """
     Generates a response from the local LLM server.
@@ -12,10 +19,10 @@ def generate_response(prompt_history: list, max_length: int = 200) -> str | None
     Returns:
         The generated message content as a string, or None if an error occurs.
     """
-    api_url = "http://127.0.0.1:1234/v1/chat/completions"
+    api_url = LM_API_URL  # Use the global constant
     headers = {"Content-Type": "application/json"}
     data = {
-        "model": "qwen3-0.6b",
+        "model": LM_MODEL_NAME,  # Use the global constant
         "messages": prompt_history,
         "max_tokens": max_length,
         "temperature": 0.7
