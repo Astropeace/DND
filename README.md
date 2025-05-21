@@ -46,6 +46,7 @@ If your LM server runs on a different IP address, port, or if you are using a di
 2.  **Interact with the DM:**
     *   The game will start with an introductory message from the DM.
     *   Type your desired action or dialogue (e.g., "look around", "go east", "ask the old man about the amulet") and press Enter.
+    *   The game now streams the Dungeon Master's responses, allowing you to read them as they are generated in real-time for a more interactive experience.
     *   To exit the game at any time, type `quit` and press Enter.
 
 ## LM API Interaction Details
@@ -61,8 +62,9 @@ For users who want to understand or adapt the LM interaction, the script sends r
             {"role": "system", "content": "You are a skilled Dungeon Master..."},
             {"role": "user", "content": "I look under the bed."}
         ],
-        "max_tokens": 200,
-        "temperature": 0.7
+        "max_tokens": 200, // This reflects the default max_length in generate_response
+        "temperature": 0.8,
+        "stream": true
     }
     ```
 *   **Expected Response Body Structure (Simplified):**

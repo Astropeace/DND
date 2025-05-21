@@ -25,7 +25,8 @@ def generate_response(prompt_history: list, max_length: int = 200) -> str | None
         "model": LM_MODEL_NAME,  # Use the global constant
         "messages": prompt_history,
         "max_tokens": max_length,
-        "temperature": 0.7
+        "temperature": 0.8, # Changed from 0.7
+        "stream": True      # Added
     }
 
     print(f"\n[Debug LM Request]")
@@ -35,68 +36,44 @@ def generate_response(prompt_history: list, max_length: int = 200) -> str | None
     print(f"  Payload: {json.dumps(data, indent=2)}")
 
     try:
-        response = requests.post(api_url, headers=headers, json=data)
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
-        print(f"Full raw response text from LM: {response.text}")
-        response_json = response.json()
-        print(f"Parsed JSON response from LM: {json.dumps(response_json, indent=2)}")
-        
-        choices = response_json.get('choices')
-        if not choices or not isinstance(choices, list) or len(choices) == 0:
-            print(f"[LM Response Error] 'choices' array is missing, empty, or not a list in LM response.")
-            # To aid debugging, print the whole problematic JSON if choices is bad
-            print(f"Full problematic JSON: {json.dumps(response_json, indent=2)}") 
-            return None
+        response = requests.post(api_url, headers=headers, json=data, stream=True) # Added stream=True
+        response.raise_for_status()  # Check for HTTP errors before starting stream
 
-        choice = choices[0]
-        if not isinstance(choice, dict):
-            print(f"[LM Response Error] First choice is not a dictionary.")
-            print(f"Problematic choice: {choice}")
-            print(f"Full problematic JSON: {json.dumps(response_json, indent=2)}")
-            return None
-            
-        message_obj = choice.get('message')
-        message_content = None
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8')
+                if decoded_line.startswith('data: '):
+                    json_str = decoded_line[len('data: '):]
+                    if json_str.strip() == "[DONE]":
+                        # print("\n[Debug Stream] Received [DONE] signal.") # Optional debug
+                        break # End of stream
+                    try:
+                        chunk = json.loads(json_str)
+                        if chunk.get('choices') and len(chunk['choices']) > 0:
+                            delta = chunk['choices'][0].get('delta', {})
+                            content_piece = delta.get('content')
+                            if content_piece:
+                                yield content_piece
+                    except json.JSONDecodeError:
+                        print(f"\n[Debug Stream] Failed to decode JSON from stream: {json_str}")
+                        # Decide if you want to continue or break on error
+                        continue 
+                    except KeyError:
+                        # This might happen if the chunk structure is unexpected
+                        # print(f"\n[Debug Stream] KeyError parsing chunk: {chunk}")
+                        continue
+        # After the loop, the generator naturally stops.
 
-        if isinstance(message_obj, dict):
-            message_content = message_obj.get('content')
-
-        if message_content is None:
-            # If 'content' under 'message' is not found or message_obj is not a dict, 
-            # try to get 'text' directly under the choice
-            message_content = choice.get('text')
-
-        if message_content is None:
-            # If still None, it means the expected fields are not present.
-            print(f"[LM Response Error] Could not find 'content' (under 'message') or 'text' directly in the first choice of LM response.")
-            print(f"Full problematic choice object: {json.dumps(choice, indent=2)}")
-            print(f"Full problematic response JSON: {json.dumps(response_json, indent=2)}")
-            return None
-        
-        message = message_content
-        return message
     except requests.exceptions.HTTPError as e:
-        print(f"[LM Communication Error] Failed to get response from LM: {e}")
+        print(f"\n[LM Communication Error] Failed to get response from LM: {e}")
         if hasattr(e, 'response') and e.response is not None:
             print(f"[LM Communication Error] Status Code: {e.response.status_code}, Response: {e.response.text}")
-        return None
+        # No return/yield here, function just ends if it's a generator and an error occurs before first yield
     except requests.exceptions.RequestException as e: # Catches other network-related errors (e.g., connection refused)
-        print(f"[LM Communication Error] Failed to connect or communicate with LM: {e}")
-        return None
-    except json.JSONDecodeError as e: # Specifically for when response.json() fails
-        print(f"[LM Response Error] Failed to decode JSON from LM response: {e}")
-        # 'response' variable should exist here from the try block
-        if hasattr(response, 'text'):
-            print(f"Problematic Raw Text from LM: {response.text}")
-        return None
-    except (KeyError, IndexError) as e: # For unexpected structure after successful JSON decoding
-        print(f"[LM Response Error] Failed to access expected keys/indices in LM JSON response: {e}")
-        # 'response_json' should exist if this block is reached after response.json()
-        if 'response_json' in locals():
-            print(f"Problematic Parsed JSON: {json.dumps(response_json, indent=2)}")
-        elif hasattr(response, 'text'): # Fallback if response_json wasn't assigned for some reason
-            print(f"Problematic Raw Text from LM (if JSON parsing failed before assignment): {response.text}")
-        return None
+        print(f"\n[LM Communication Error] Failed to connect or communicate with LM: {e}")
+        # No return/yield here
+    # The specific JSONDecodeError, KeyError, IndexError for the *full* response are removed
+    # as errors during stream parsing are handled inside the loop.
 
 def game_loop():
     print("Welcome to the AI Dungeon Master!")
@@ -118,14 +95,20 @@ def game_loop():
 
     conversation_history = [system_prompt, initial_dm_prompt_message]
 
-    dm_response_text = generate_response(conversation_history)
+    print("\nDM: ", end='', flush=True) # Print prefix once
+    full_dm_response = ""
+    initial_response_successful = False
+    for token in generate_response(conversation_history):
+        print(token, end='', flush=True)
+        full_dm_response += token
+        initial_response_successful = True
+    print() # Newline after stream
 
-    if not dm_response_text:
-        print("\n[System Message] Failed to start the game. The DM (Language Model) is not responding. Please ensure your local LM server (e.g., LM Studio) is running and the model is loaded. Then, restart this game script.\n")
+    if not initial_response_successful: # If no tokens were yielded
+        print("\n[System Message] Failed to start the game. The DM (Language Model) is not responding. Please ensure your local LM server is running and the model is loaded. Then, restart this game script.\n")
         return
-
-    print(f"\nDM: {dm_response_text}\n")
-    conversation_history.append({"role": "assistant", "content": dm_response_text})
+    
+    conversation_history.append({"role": "assistant", "content": full_dm_response})
 
     while True:
         user_input = input("Your action: ")
@@ -135,15 +118,25 @@ def game_loop():
 
         conversation_history.append({"role": "user", "content": user_input})
 
-        dm_response_text = generate_response(conversation_history)
+        print("\nDM: ", end='', flush=True) # Print prefix once
+        full_dm_response = ""
+        response_successful_in_loop = False
+        for token in generate_response(conversation_history):
+            print(token, end='', flush=True)
+            full_dm_response += token
+            response_successful_in_loop = True
+        print() # Newline after stream
 
-        if dm_response_text:
-            print(f"\nDM: {dm_response_text}\n")
-            conversation_history.append({"role": "assistant", "content": dm_response_text})
+        if response_successful_in_loop:
+            conversation_history.append({"role": "assistant", "content": full_dm_response})
         else:
-            print("\nDM: [System Message] I'm having trouble connecting to my thoughts (the Language Model). Please check if the local LM server is running correctly. You can try your command again or type 'quit'.\n")
+            # This else handles cases where the generator yielded nothing, 
+            # implying an error during request or an empty stream.
+            # The error messages from generate_response itself should have already printed.
+            print("\n[System Message] The DM seems to be having trouble formulating a response. Try again or type 'quit'.\n")
             # Optional: remove last user message if DM fails, so they can re-enter
-            # conversation_history.pop() 
+            # if conversation_history[-1]['role'] == 'user':
+            #     conversation_history.pop()
 
 if __name__ == "__main__":
     game_loop()
