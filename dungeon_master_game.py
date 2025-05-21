@@ -30,8 +30,43 @@ def generate_response(prompt_history: list, max_length: int = 200) -> str | None
     try:
         response = requests.post(api_url, headers=headers, json=data)
         response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+        print(f"Full raw response text from LM: {response.text}")
         response_json = response.json()
-        message = response_json['choices'][0]['message']['content']
+        print(f"Parsed JSON response from LM: {json.dumps(response_json, indent=2)}")
+        
+        choices = response_json.get('choices')
+        if not choices or not isinstance(choices, list) or len(choices) == 0:
+            print(f"[LM Response Error] 'choices' array is missing, empty, or not a list in LM response.")
+            # To aid debugging, print the whole problematic JSON if choices is bad
+            print(f"Full problematic JSON: {json.dumps(response_json, indent=2)}") 
+            return None
+
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            print(f"[LM Response Error] First choice is not a dictionary.")
+            print(f"Problematic choice: {choice}")
+            print(f"Full problematic JSON: {json.dumps(response_json, indent=2)}")
+            return None
+            
+        message_obj = choice.get('message')
+        message_content = None
+
+        if isinstance(message_obj, dict):
+            message_content = message_obj.get('content')
+
+        if message_content is None:
+            # If 'content' under 'message' is not found or message_obj is not a dict, 
+            # try to get 'text' directly under the choice
+            message_content = choice.get('text')
+
+        if message_content is None:
+            # If still None, it means the expected fields are not present.
+            print(f"[LM Response Error] Could not find 'content' (under 'message') or 'text' directly in the first choice of LM response.")
+            print(f"Full problematic choice object: {json.dumps(choice, indent=2)}")
+            print(f"Full problematic response JSON: {json.dumps(response_json, indent=2)}")
+            return None
+        
+        message = message_content
         return message
     except requests.exceptions.HTTPError as e:
         print(f"[LM Communication Error] Failed to get response from LM: {e}")
@@ -41,8 +76,19 @@ def generate_response(prompt_history: list, max_length: int = 200) -> str | None
     except requests.exceptions.RequestException as e: # Catches other network-related errors (e.g., connection refused)
         print(f"[LM Communication Error] Failed to connect or communicate with LM: {e}")
         return None
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
-        print(f"[LM Response Error] Failed to parse LM response or unexpected format: {e}")
+    except json.JSONDecodeError as e: # Specifically for when response.json() fails
+        print(f"[LM Response Error] Failed to decode JSON from LM response: {e}")
+        # 'response' variable should exist here from the try block
+        if hasattr(response, 'text'):
+            print(f"Problematic Raw Text from LM: {response.text}")
+        return None
+    except (KeyError, IndexError) as e: # For unexpected structure after successful JSON decoding
+        print(f"[LM Response Error] Failed to access expected keys/indices in LM JSON response: {e}")
+        # 'response_json' should exist if this block is reached after response.json()
+        if 'response_json' in locals():
+            print(f"Problematic Parsed JSON: {json.dumps(response_json, indent=2)}")
+        elif hasattr(response, 'text'): # Fallback if response_json wasn't assigned for some reason
+            print(f"Problematic Raw Text from LM (if JSON parsing failed before assignment): {response.text}")
         return None
 
 def game_loop():
