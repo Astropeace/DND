@@ -1,0 +1,5 @@
+{
+  "name": "AI Dungeon Master",
+  "description": "An AI-powered Dungeons & Dragons game where the language model acts as the Dungeon Master, narrating stories, managing inventory, simulating dice rolls, and generating scene illustrations.",
+  "requestFramePermissions": []
+}
